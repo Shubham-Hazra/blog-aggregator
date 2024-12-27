@@ -1,0 +1,58 @@
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+*.out
+
+# Go build artifacts
+/bin/
+/build/
+/*.exe
+/*.test
+*.log
+*.prof
+
+# Dependency directories (vendor/)
+vendor/
+
+# Generated files
+sqlc_generated.go
+sqlc.yaml~
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+*.Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Node-related (if npm/yarn is used in blog-aggregator)
+node_modules/
+yarn.lock
+package-lock.json
+
+# SQL dump files
+*.sql.dump
+*.sql.bak
+
+# Config and secrets
+config/config.yaml
+config/config.json
+config/config.go.bak
+.env
+*.env
+
+# Go modules
+go.sum
+go.mod~
+
