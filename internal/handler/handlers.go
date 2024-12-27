@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ func NewHandler(state *State) (h *Handler){
 			"follow":    middlewareLoggedIn(HandleFollow),
 			"unfollow":    middlewareLoggedIn(HandleUnfollow),
 			"following": middlewareLoggedIn(HandleFollowing),
+			"browse": middlewareLoggedIn(HandleBrowse),
 		}
 	return h
 }
@@ -48,15 +50,93 @@ func (h *Handler) Execute(cmd types.Command) error {
 
 // HandleAgg handles the aggregation of RSS feeds
 func HandleAgg(s *State, cmd types.Command) error {
-	url := "https://www.wagslane.dev/index.xml"
-	ctx := context.Background()
 
-	rssFeed, err := rss.FetchFeed(ctx, url)
+	time_between_reqs := cmd.Args[0]
+	timeBetweenRequests, err := time.ParseDuration(time_between_reqs)
 	if err != nil {
 		return err
 	}
 
-	printFeedInfo(rssFeed)
+	fmt.Println("Collecting feeds every " + timeBetweenRequests.String())
+	ticker := time.NewTicker(timeBetweenRequests)
+	for ; ; <-ticker.C {
+		err := scrapeFeeds(s)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func scrapeFeeds(s *State) error {
+	nextFeed, err := s.DBQueries.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		return err
+	}
+
+	err = s.DBQueries.MarkFeedFetched(context.Background(), nextFeed.ID)
+	if err != nil {
+		return err
+	}
+
+	feed, err := rss.FetchFeed(context.Background(), nextFeed.Url)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range feed.Channel.Items{
+		err = savePostToDB(s, &item, &nextFeed)
+		if err != nil {
+			if isDuplicateURLError(err) {
+				continue
+			}
+			log.Printf("Error saving post with URL %s: %v\n", item.Link, err)
+		}
+	}
+
+	return nil
+}
+
+func savePostToDB(s *State, item *rss.Item, feed *database.Feed) error {
+	publishedAt, err := time.Parse(time.RFC1123, item.PubDate)
+	if err != nil {
+		return err
+	}
+	err = s.DBQueries.CreatePost(context.Background(), database.CreatePostParams{
+		Title:       item.Title,
+		Url:         item.Link,
+		Description: sql.NullString{String: item.Description, Valid: true},
+		PublishedAt: sql.NullTime{Time: publishedAt, Valid: true},
+		FeedID:      feed.ID,
+	})
+	return err
+}
+
+func isDuplicateURLError(err error) bool {
+	return err != nil && err.Error() == "pq: duplicate key value violates unique constraint \"posts_url_key\""
+}
+
+func HandleBrowse(s *State, cmd types.Command, user database.User) error {
+	var limit int = 2
+	if len(cmd.Args) != 0 {
+		var err error
+		limit, err = strconv.Atoi(cmd.Args[0])
+		if err != nil {
+			return err 
+		}
+	}
+
+	posts , err:= s.DBQueries.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit: int32(limit),
+	} )
+	if err != nil {
+		return err 
+	}
+
+	for _, post := range posts {
+		printPostInfo(&post)
+	}
+
 	return nil
 }
 
@@ -313,18 +393,11 @@ func printDivider() {
 	fmt.Println(strings.Repeat("#", 50))
 }
 
-func printFeedInfo(feed *rss.Feed) {
-	fmt.Println("Channel Title: " + feed.Channel.Title)
-	fmt.Println("Channel Description: " + feed.Channel.Description)
-	fmt.Println("Channel Link: " + feed.Channel.Link)
-	fmt.Println("Items:")
-	
-	for _, item := range feed.Channel.Items {
-		printDivider()
-		fmt.Printf("Title: %s\nDescription: %s\nLink: %s\nPubDate: %s\n",
-			item.Title, item.Description, item.Link, item.PubDate)
-		printDivider()
-	}
+func printPostInfo(post *database.GetPostsForUserRow) {
+	printDivider()
+	fmt.Printf("Feed Name: %v\nTitle: %v\nDescription: %v\nLink: %v\nPubDate: %v\n",
+		post.FeedName, post.Title, post.Description.String, post.Url, post.PublishedAt.Time)
+	printDivider()
 }
 
 func logUserDetails(user database.User) {
@@ -336,3 +409,4 @@ func logFeedDetails(feed database.Feed) {
 	log.Printf("id: %v, name: %v, url: %v, user_id: %v, created_at: %v, updated_at: %v",
 		feed.ID, feed.Name, feed.Url, feed.UserID, feed.CreatedAt, feed.UpdatedAt)
 }
+
