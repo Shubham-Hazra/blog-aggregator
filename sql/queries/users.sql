@@ -14,6 +14,3 @@ WHERE name = $1;
 
 -- name: GetUsers :many
 SELECT * FROM users;
-
--- name: ResetTable :exec
-DELETE FROM users;
